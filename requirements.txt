@@ -1,0 +1,6 @@
+langchain-openai
+langchain
+streamlit
+python-dotenv
+aioconsole
+asyncio
