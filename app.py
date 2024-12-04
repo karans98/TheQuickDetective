@@ -1,13 +1,11 @@
 import json
 import os
-import string
-import time
 from dotenv import load_dotenv
-import streamlit as st
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 import requests
 import asyncio
+import aioconsole
 
 load_dotenv()
 
@@ -31,77 +29,70 @@ def entity_extraction_prompt():
         input_variables=["text"],
         template=(
             "Extract the following entities from the text: persons, locations, and items. "
-            "Provide them in JSON format with keys 'person', 'location', and 'item':\n{text}"
+            "Provide them in JSON format with keys 'persons', 'locations', and 'items':\n{text}"
         )
     )
     return entity_extraction_prompt
 
-def verify_location(location):
-    url = "mockurl{location}"
-    #response = requests.get(url)
-    #data = response.json()
-    print("Waiting for API Response ... ")
-    time.sleep(5)
-    return f"{location} is verified"
-
-def main():
-    st.title('The Quick Detective Chatbot')
-
-    entity_chain = entity_extraction_prompt() | load_llm()
+def summary_and_entities(text):
     summary_chain = summarization_prompt() | load_llm()
-    all_clues = []
+    entity_chain = entity_extraction_prompt() | load_llm()
 
+    print(f"Started processing clue: {text}")
+    entities = entity_chain.invoke(text)
+    print("\n Extract Entities", entities.content)
+    entities_dict = json.loads(entities.content)
+    print("\n Summary of the clue: ")
+    summary = summary_chain.invoke(text)
+    print(summary.content)
 
-    user_input = st.text_area("Hello! I am your AI assistant. Please provide a clue: ")
-    all_clues += user_input
+    return entities_dict
 
-    st.write('\n')
-    if st.button("Extract Entities"):
+# Function to verify location in clue
+async def location_processor(clue,entities_dict):
+    for location in entities_dict['locations']:
+        url = "mockurl{location}"
+        #response = requests.get(url)
+        #data = response.json()
+        print("Waiting for API Response ... ")
+        await asyncio.sleep(20)
+        print(f" The location {location} is verified")
+    print(f"Finished processing clue: {clue}\n")
 
-        entities = entity_chain.invoke(user_input)
-        st.write("Extracted Entities", entities.content)
-        entities_dict = json.loads(entities.content)
+# Function to read clues and add them to the queue
+async def read_clues(queue):
+    while True:
+        clue = await aioconsole.ainput("Enter a new clue (or type 'quit' to stop): ")
+        if clue.lower() == "quit":
+            print("Stopping input...")
+            await queue.put((None,None))
+            break
+        entities_dict = summary_and_entities(clue)
+        if entities_dict.get("locations"):
+            await queue.put((clue,entities_dict))
+            print(f"Clue '{clue}' added to the queue.")
+        else:
+            print(f"Finished processing clue: {clue}\n")
 
-        if entities_dict.get("location"):
-            for location in entities_dict['location']:
-                verification_result = verify_location(location)
-                st.write(verification_result)
+# Function to process clues from the queue
+async def process_clues(queue):
+    while True:
+        clue,entities_dict = await queue.get()
+        if clue is None:
+            break
+        await location_processor(clue,entities_dict)
+        queue.task_done()
 
+async def main():
 
+    queue = asyncio.Queue()
+    input_task = asyncio.create_task(read_clues(queue))
+    processing_task = asyncio.create_task(process_clues(queue))
     
+    await input_task
+    await processing_task
 
-                
-        required_entities = ["person", "location", "item"]
-        missing_entities = [key for key in required_entities if not entities_dict.get(key)]
-        st.write("The missing entities are - ",missing_entities)
-        
-        
-        if len(missing_entities)>0:
-            for entity in missing_entities:
-                user_response = st.text_area(f"Could you please provide me details about the {entity}? ","")
-                all_clues += user_input
-
-                if st.button(f"Submit {entity} clue"):
-                    complete_input += user_response
-                    new_entities = entity_chain.invoke(user_response)
-                    new_dict = json.loads(new_entities.content)
-                    entities_dict = {key: entities_dict[key] + new_dict.get(key, []) for key in entities_dict}
-                    st.write("Updated Entity obtained",entities_dict)
-        
-            
-        st.write("Final Entity obtained",entities_dict)
-
-
-
-    
-    if st.button("Extract Summary"):
-        all_clues_str = "".join(all_clues)
-        summary = summary_chain.invoke(all_clues_str)
-        st.write(summary.content)
-
-
-
+    print("All clues processed.")
 
 if __name__ == '__main__':
-    main()
-
+    asyncio.run(main())
